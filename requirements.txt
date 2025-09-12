@@ -1,0 +1,8 @@
+jupyter
+requests
+beautifulsoup4
+nltk
+scikit-learn
+pykhmernlp
+networkx
+rouge-score
