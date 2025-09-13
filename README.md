@@ -15,7 +15,7 @@ This project is a functional prototype of an extractive text summarizer for news
 -   **Core Libraries**:
     -   `Jupyter Notebook`: For interactive development and demonstration.
     -   `requests` & `BeautifulSoup4`: For web scraping.
-    -   `pykhmernlp`: For accurate Khmer word tokenization.
+    -   `khmernltk`: For accurate Khmer word tokenization.
     -   `scikit-learn`: For TF-IDF vectorization.
     -   `networkx`: For building the graph for the TextRank algorithm.
     -   `rouge-score`: For summary evaluation.
