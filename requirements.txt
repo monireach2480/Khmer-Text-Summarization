@@ -1,8 +1,21 @@
-jupyter
-requests
-beautifulsoup4
-nltk
-scikit-learn
-khmernltk
+# Core NLP Libraries
+# nltk
+# khmernltk
+
+# Machine Learning
+# scikit-learn
+# numpy
+# pandas
+
+# Graph Processing
 networkx
-rouge-score
+
+# Web Application
+streamlit
+plotly
+
+# Utilities
+python-dotenv
+
+# Optional for better performance
+python-Levenshtein
