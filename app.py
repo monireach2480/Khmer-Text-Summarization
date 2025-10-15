@@ -8,7 +8,6 @@ import plotly.graph_objects as go
 import plotly.express as px
 
 # Import your summarization system
-# Assuming the notebook code is converted to a module
 from khmer_summarization import (
     KhmerTextPreprocessor,
     TextRankSummarizer,

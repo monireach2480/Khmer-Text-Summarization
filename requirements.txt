@@ -1,11 +1,11 @@
 # Core NLP Libraries
-# nltk
-# khmernltk
+nltk
+khmer-nltk
 
 # Machine Learning
-# scikit-learn
-# numpy
-# pandas
+scikit-learn
+numpy
+pandas
 
 # Graph Processing
 networkx
