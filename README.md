@@ -281,7 +281,7 @@ print(summary['summary'])
 
 **1. KhmerNLTK not found**
 ```bash
-pip install khmernltk
+pip install khmer-nltk
 ```
 
 **2. Unicode encoding errors**
