@@ -13,6 +13,7 @@ from khmer_summarization import (
     TextRankSummarizer,
     TFIDFSummarizer,
     FrequencySummarizer,
+    ClusteringSummarizer,
     SummarizationEvaluator,
     KhmerSummarizationSystem
 )
@@ -243,9 +244,19 @@ def main():
         # Method selection
         method = st.selectbox(
             "Summarization Method",
-            ["TextRank", "TF-IDF", "Frequency"],
+            ["TextRank", "TF-IDF", "Frequency", "Clustering"],
             help="Choose the algorithm for summarization"
         )
+        
+        # TextRank specific options
+        if method == "TextRank":
+            use_tfidf_weighting = st.checkbox(
+                "Use TF-IDF Weighting", 
+                value=True,
+                help="Use TF-IDF weighted similarity for better results"
+            )
+        else:
+            use_tfidf_weighting = True  # Default for other methods
         
         # Summary length
         summary_type = st.radio(
@@ -280,11 +291,12 @@ def main():
             generate summaries of Khmer text documents.
             
             **Methods:**
-            - **TextRank**: Graph-based ranking
-            - **TF-IDF**: Term frequency analysis
+            - **TextRank**: Graph-based ranking with TF-IDF weighting
+            - **TF-IDF**: Term frequency-inverse document frequency
             - **Frequency**: Word frequency scoring
+            - **Clustering**: K-means clustering approach
             
-            **Built with:** Python, NLTK, NetworkX, Streamlit
+            **Built with:** Python, NLTK, NetworkX, Scikit-learn, Streamlit
             """)
     
     # Main content
@@ -342,7 +354,8 @@ def main():
                                     input_text,
                                     method=method.lower(),
                                     num_sentences=num_sentences,
-                                    summary_ratio=summary_ratio
+                                    summary_ratio=summary_ratio,
+                                    use_tfidf_weighting=use_tfidf_weighting
                                 )
                                 st.session_state.current_summary = summary
                                 st.session_state.current_text = input_text
@@ -380,12 +393,17 @@ def main():
                         """, unsafe_allow_html=True)
                         
                         # Metrics
-                        metric_col1, metric_col2 = st.columns(2)
+                        metric_col1, metric_col2, metric_col3 = st.columns(3)
                         with metric_col1:
                             st.metric("Sentences", result['num_sentences'])
                         with metric_col2:
                             compression = result.get('compression_ratio', 0)
                             st.metric("Compression", f"{compression:.1%}")
+                        with metric_col3:
+                            if 'weighting' in result:
+                                st.metric("Weighting", result['weighting'])
+                            elif 'algorithm' in result:
+                                st.metric("Algorithm", result['algorithm'])
                         
                         if show_scores and 'sentence_scores' in result:
                             st.plotly_chart(
@@ -408,7 +426,7 @@ def main():
                 """, unsafe_allow_html=True)
                 
                 # Metrics in cards
-                col_m1, col_m2, col_m3 = st.columns(3)
+                col_m1, col_m2, col_m3, col_m4 = st.columns(4)
                 
                 with col_m1:
                     st.markdown(
@@ -443,6 +461,29 @@ def main():
                         ),
                         unsafe_allow_html=True
                     )
+                
+                with col_m4:
+                    if 'weighting' in summary:
+                        weighting_display = summary['weighting'].replace('_', ' ').title()
+                        st.markdown(
+                            create_metric_card(
+                                weighting_display,
+                                "Weighting",
+                                "#667eea",
+                                "#764ba2"
+                            ),
+                            unsafe_allow_html=True
+                        )
+                    elif 'algorithm' in summary:
+                        st.markdown(
+                            create_metric_card(
+                                summary['algorithm'],
+                                "Algorithm",
+                                "#667eea",
+                                "#764ba2"
+                            ),
+                            unsafe_allow_html=True
+                        )
                 
                 # Sentence scores visualization
                 if show_scores and 'sentence_scores' in summary:
@@ -577,6 +618,34 @@ def main():
                                 plot_rouge_scores(evaluation['rouge_scores']),
                                 use_container_width=True
                             )
+            elif reference_text and 'current_summaries' in st.session_state:
+                if st.button("Compare All Methods (ROUGE)"):
+                    with st.spinner('Calculating ROUGE scores for all methods...'):
+                        # Create comparison table
+                        comparison_data = []
+                        summaries = st.session_state.current_summaries
+                        
+                        for method_name, result in summaries.items():
+                            evaluation = st.session_state.system.evaluate(
+                                text,
+                                result['summary'],
+                                reference_text
+                            )
+                            
+                            if 'rouge_scores' in evaluation:
+                                rouge = evaluation['rouge_scores']
+                                comparison_data.append({
+                                    'Method': method_name,
+                                    'ROUGE-1 F1': f"{rouge['rouge-1']['f1']:.3f}",
+                                    'ROUGE-2 F1': f"{rouge['rouge-2']['f1']:.3f}",
+                                    'ROUGE-L F1': f"{rouge['rouge-l']['f1']:.3f}",
+                                    'Avg ROUGE': f"{(rouge['rouge-1']['f1'] + rouge['rouge-2']['f1'] + rouge['rouge-l']['f1']) / 3:.3f}"
+                                })
+                        
+                        if comparison_data:
+                            comparison_df = pd.DataFrame(comparison_data)
+                            st.markdown("### 📊 Method Comparison (ROUGE Scores)")
+                            st.dataframe(comparison_df, use_container_width=True)
         else:
             st.info("📝 Generate a summary first to see analysis")
     
