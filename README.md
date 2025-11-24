@@ -12,9 +12,9 @@
 
 ---
 
-![Khmer Text Summarization Demo 1](./images/imagee.png)
-![Khmer Text Summarization Demo 2](./images/imageee.png)
-![Khmer Text Summarization Demo 3](./images/imageeee.png)
+![Khmer Text Summarization Demo 1](./image/imagee.png)
+![Khmer Text Summarization Demo 2](./image/imageee.png)
+![Khmer Text Summarization Demo 3](./image/imageeee.png)
 
 
 ## 📋 Overview
