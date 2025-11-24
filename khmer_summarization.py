@@ -9,6 +9,11 @@ from math import sqrt, log
 from collections import Counter, defaultdict
 from typing import List, Dict, Tuple
 
+from sklearn.cluster import KMeans
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+import numpy as np
+
 # NLTK imports
 import nltk
 from nltk.corpus import stopwords
@@ -27,7 +32,7 @@ try:
 except ImportError:
     KHMERNLTK_AVAILABLE = False
     print("⚠ Warning: khmernltk not installed. Using fallback tokenization.")
-    print("  Install with: pip install khmernltk")
+    print("  Install with: pip install khmernltk or Install with: pip install khmer-nltk")
 
 import warnings
 warnings.filterwarnings('ignore')
@@ -146,13 +151,39 @@ class KhmerTextPreprocessor:
         original_sentences = self.tokenize_sentences(text)
         
         processed_sentences = []
+        
         for sentence in original_sentences:
             words = self.preprocess_text(sentence, remove_punct=True, 
                                         remove_stops=True, normalize=True)
-            if words:
-                processed_sentences.append(words)
+            # CRITICAL: Keep ALL sentences to maintain index alignment
+            # Use placeholder for empty sentences
+            processed_sentences.append(words if words else ['<EMPTY>'])
         
-        return original_sentences[:len(processed_sentences)], processed_sentences
+        return original_sentences, processed_sentences
+    
+    
+    def format_summary(self, sentences: List[str]) -> str:
+        """
+        Standardized summary formatting for Khmer text
+        Ensures consistent period handling across all methods
+        """
+        if not sentences:
+            return ""
+        
+        # Remove trailing periods and spaces from each sentence
+        clean_sentences = [s.rstrip('។ ') for s in sentences]
+        
+        # Join with Khmer period and space
+        summary = '។ '.join(clean_sentences)
+        
+        # Ensure summary ends with period
+        if not summary.endswith('។'):
+            summary += '។'
+        
+        # Remove any double/triple periods
+        summary = re.sub(r'។+', '។', summary)
+        
+        return summary
 
 
 class TextRankSummarizer:
@@ -174,6 +205,10 @@ class TextRankSummarizer:
     
     def sentence_similarity(self, sent1: List[str], sent2: List[str]) -> float:
         """Calculate similarity between two sentences"""
+        # Handle empty sentences
+        if not sent1 or not sent2 or sent1 == ['<EMPTY>'] or sent2 == ['<EMPTY>']:
+            return 0.0
+        
         all_words = list(set(sent1 + sent2))
         
         if not all_words:
@@ -183,6 +218,71 @@ class TextRankSummarizer:
         vector2 = [sent2.count(word) for word in all_words]
         
         return self.cosine_similarity_vectors(vector1, vector2)
+
+    def calculate_tfidf_scores(self, sentences: List[List[str]]) -> Dict[str, float]:
+        """
+        Calculate TF-IDF scores for all words in the document
+        
+        Args:
+            sentences: List of tokenized sentences (list of word lists)
+        
+        Returns:
+            Dictionary mapping word -> TF-IDF score
+        """
+        # Calculate Document Frequency: how many sentences contain each word
+        doc_freq = Counter()
+        for sentence in sentences:
+            unique_words = set(sentence)
+            for word in unique_words:
+                doc_freq[word] += 1
+        
+        total_sentences = len(sentences)
+        tfidf_scores = {}
+        # Calculate IDF for each word
+        # IDF = log(total_sentences / sentences_containing_word)
+        for word, freq in doc_freq.items():
+            idf = log(total_sentences / freq)
+            tfidf_scores[word] = idf
+        
+        return tfidf_scores
+
+    def sentence_similarity_tfidf(self, sent1: List[str], sent2: List[str], 
+                               tfidf_scores: Dict[str, float]) -> float:
+        """
+        Calculate TF-IDF weighted cosine similarity between two sentences
+        
+        Args:
+            sent1: First sentence (list of words)
+            sent2: Second sentence (list of words)
+            tfidf_scores: Dictionary of TF-IDF scores for all words
+        
+        Returns:
+            Similarity score between 0 and 1
+        """
+        if not sent1 or not sent2 or sent1 == ['<EMPTY>'] or sent2 == ['<EMPTY>']:
+            return 0.0
+        all_words = list(set(sent1 + sent2))
+        
+        if not all_words:
+            return 0.0
+        
+        # Create TF-IDF weighted vectors
+        vector1 = []
+        vector2 = []
+        
+        for word in all_words:
+            # Get TF-IDF weight for this word
+            tfidf_weight = tfidf_scores.get(word, 0)
+            
+            # TF (term frequency in sentence) * IDF weight
+            tf1 = sent1.count(word)
+            tf2 = sent2.count(word)
+            
+            vector1.append(tf1 * tfidf_weight)
+            vector2.append(tf2 * tfidf_weight)
+        
+        return self.cosine_similarity_vectors(vector1, vector2)
+    
     
     def build_similarity_matrix(self, sentences: List[List[str]]) -> np.ndarray:
         """Build sentence similarity matrix for graph construction"""
@@ -198,15 +298,55 @@ class TextRankSummarizer:
         
         return similarity_matrix
     
+    def build_similarity_matrix_tfidf(self, sentences: List[List[str]]) -> np.ndarray:
+        """
+        Build sentence similarity matrix using TF-IDF weighted similarity
+        
+        Args:
+            sentences: List of preprocessed sentences
+        
+        Returns:
+            NxN similarity matrix where N is number of sentences
+        """
+        n = len(sentences)
+        similarity_matrix = np.zeros((n, n))
+        
+        # Calculate TF-IDF scores once for the entire document
+        tfidf_scores = self.calculate_tfidf_scores(sentences)
+        
+        # Build similarity matrix
+        for i in range(n):
+            for j in range(n):
+                if i != j:
+                    similarity_matrix[i][j] = self.sentence_similarity_tfidf(
+                        sentences[i], sentences[j], tfidf_scores
+                    )
+        
+        return similarity_matrix
+    
+    
     def summarize(self, text: str, num_sentences: int = 3, 
-                 summary_ratio: float = None) -> Dict:
-        """Generate extractive summary using TextRank"""
+             summary_ratio: float = None, use_tfidf_weighting: bool = True) -> Dict:
+        """
+        Generate extractive summary using TextRank
+        
+        Args:
+            text: Input text to summarize
+            num_sentences: Number of sentences to extract
+            summary_ratio: Alternative to num_sentences - fraction of sentences (0-1)
+            use_tfidf_weighting: If True, use TF-IDF weighted similarity (default)
+                            If False, use original word-count similarity
+        
+        Returns:
+            Dictionary containing summary and metadata
+        """
         original_sentences, processed_sentences = self.preprocessor.preprocess_sentences(text)
         
         if len(original_sentences) == 0:
             return {
                 'summary': "",
                 'method': 'TextRank',
+                'weighting': 'tfidf' if use_tfidf_weighting else 'word_count',
                 'num_sentences': 0,
                 'error': 'No sentences found'
             }
@@ -221,11 +361,17 @@ class TextRankSummarizer:
             return {
                 'summary': summary_text,
                 'method': 'TextRank',
+                'weighting': 'tfidf' if use_tfidf_weighting else 'word_count',
                 'num_sentences': len(original_sentences),
                 'note': 'Document too short, returned original'
             }
         
-        similarity_matrix = self.build_similarity_matrix(processed_sentences)
+        # Choose similarity calculation method based on parameter
+        if use_tfidf_weighting:
+            similarity_matrix = self.build_similarity_matrix_tfidf(processed_sentences)
+        else:
+            similarity_matrix = self.build_similarity_matrix(processed_sentences)
+        
         similarity_graph = nx.from_numpy_array(similarity_matrix)
         scores = nx.pagerank(similarity_graph, max_iter=100)
         
@@ -238,12 +384,12 @@ class TextRankSummarizer:
         selected_indices = sorted([sent[1] for sent in ranked_sentences[:num_sentences]])
         summary_sentences = [original_sentences[i] for i in selected_indices]
         
-        summary_text = '។ '.join(summary_sentences)
-        summary_text = summary_text.replace('។។', '។')
+        summary_text = self.preprocessor.format_summary(summary_sentences)
         
         return {
             'summary': summary_text,
             'method': 'TextRank',
+            'weighting': 'tfidf' if use_tfidf_weighting else 'word_count',
             'num_sentences': num_sentences,
             'total_sentences': len(original_sentences),
             'compression_ratio': num_sentences / len(original_sentences),
@@ -297,8 +443,8 @@ class TFIDFSummarizer:
         selected_indices = sorted(ranked_indices[:num_sentences])
         summary_sentences = [original_sentences[i] for i in selected_indices]
         
-        summary_text = '។ '.join(summary_sentences)
-        summary_text = summary_text.replace('។។', '។')
+        # Clean sentences before joining to avoid double periods
+        summary_text = self.preprocessor.format_summary(summary_sentences)
         
         return {
             'summary': summary_text,
@@ -307,6 +453,109 @@ class TFIDFSummarizer:
             'total_sentences': len(original_sentences),
             'compression_ratio': num_sentences / len(original_sentences),
             'sentence_scores': {i: float(sentence_scores[i]) for i in range(len(sentence_scores))}
+        }
+
+
+class ClusteringSummarizer:
+    """
+    Unsupervised clustering-based extractive summarization
+    Uses K-means to cluster sentences and selects representative sentences
+    """
+    
+    def __init__(self, preprocessor: KhmerTextPreprocessor):
+        self.preprocessor = preprocessor
+        self.vectorizer = None
+    
+    def summarize(self, text: str, num_sentences: int = 3, 
+             summary_ratio: float = None) -> Dict:
+        """
+        Generate summary using K-means clustering
+        
+        Algorithm:
+        1. Convert sentences to TF-IDF vectors (feature extraction)
+        2. Cluster sentences using K-means (unsupervised learning)
+        3. Select sentence closest to each cluster center
+        4. Return selected sentences in original order
+        """
+        original_sentences, processed_sentences = self.preprocessor.preprocess_sentences(text)
+        
+        if len(original_sentences) == 0:
+            return {
+                'summary': "",
+                'method': 'Clustering',
+                'num_sentences': 0,
+                'error': 'No sentences found'
+            }
+        
+        if summary_ratio:
+            num_sentences = max(1, int(len(original_sentences) * summary_ratio))
+        else:
+            num_sentences = min(num_sentences, len(original_sentences))
+        
+        if len(original_sentences) <= num_sentences:
+            clean_sentences = [s.rstrip('។ ') for s in original_sentences]
+            summary_text = '។ '.join(clean_sentences)
+            if not summary_text.endswith('។'):
+                summary_text += '។'
+            return {
+                'summary': summary_text,
+                'method': 'Clustering',
+                'num_sentences': len(original_sentences),
+                'note': 'Document too short, returned original'
+            }
+        
+        # Convert sentences to strings for vectorization
+        sentence_strings = [' '.join(sent) for sent in processed_sentences]
+        
+        # Step 1: Feature extraction using TF-IDF
+        self.vectorizer = TfidfVectorizer()
+        tfidf_matrix = self.vectorizer.fit_transform(sentence_strings)
+        
+        # Step 2: Unsupervised learning - K-means clustering
+        # Number of clusters = number of sentences we want
+        n_clusters = min(num_sentences, len(original_sentences))
+        kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+        kmeans.fit(tfidf_matrix)
+        
+        # Step 3: Select MOST INFORMATIVE sentence in each cluster (not closest to center)
+        selected_indices = []
+
+        for i in range(n_clusters):
+            # Find all sentences in this cluster
+            cluster_sentences = np.where(kmeans.labels_ == i)[0]
+            
+            if len(cluster_sentences) == 0:
+                continue
+            
+            # Get vectors for sentences in this cluster
+            cluster_vectors = tfidf_matrix[cluster_sentences]
+            
+            # NEW STRATEGY: Pick sentence with HIGHEST TF-IDF importance
+            # (not closest to centroid, which picks "average" boring sentences)
+            sentence_importance = np.array(cluster_vectors.sum(axis=1)).flatten()
+            
+            # Select most important sentence in this cluster
+            best_idx_in_cluster = sentence_importance.argmax()
+            closest_sentence_idx = cluster_sentences[best_idx_in_cluster]
+            
+            selected_indices.append(closest_sentence_idx)
+        
+        # Step 4: Sort by original position and create summary
+        selected_indices = sorted(selected_indices)
+        summary_sentences = [original_sentences[i] for i in selected_indices]
+        
+        # Clean sentences to avoid double periods
+        summary_text = self.preprocessor.format_summary(summary_sentences)
+        
+        return {
+            'summary': summary_text,
+            'method': 'Clustering',
+            'algorithm': 'K-means',
+            'num_sentences': num_sentences,
+            'total_sentences': len(original_sentences),
+            'num_clusters': n_clusters,
+            'compression_ratio': num_sentences / len(original_sentences),
+            'cluster_labels': kmeans.labels_.tolist()
         }
 
 
@@ -376,8 +625,7 @@ class FrequencySummarizer:
         selected_indices = sorted(ranked_indices[:num_sentences])
         summary_sentences = [original_sentences[i] for i in selected_indices]
         
-        summary_text = '។ '.join(summary_sentences)
-        summary_text = summary_text.replace('។។', '។')
+        summary_text = self.preprocessor.format_summary(summary_sentences)
         
         return {
             'summary': summary_text,
@@ -500,29 +748,35 @@ class KhmerSummarizationSystem:
         self.textrank = TextRankSummarizer(self.preprocessor)
         self.tfidf = TFIDFSummarizer(self.preprocessor)
         self.frequency = FrequencySummarizer(self.preprocessor)
+        self.clustering = ClusteringSummarizer(self.preprocessor)  # ← NEW!
         self.evaluator = SummarizationEvaluator(self.preprocessor)
         
         print("System initialized successfully!")
         print()
-    
+
     def summarize(self, text: str, method: str = 'textrank', 
-                 num_sentences: int = 3, summary_ratio: float = None) -> Dict:
+             num_sentences: int = 3, summary_ratio: float = None,
+             use_tfidf_weighting: bool = True) -> Dict:
         """Generate summary using specified method"""
         method = method.lower()
         
         if method == 'textrank':
-            return self.textrank.summarize(text, num_sentences, summary_ratio)
+            return self.textrank.summarize(text, num_sentences, summary_ratio, use_tfidf_weighting)
         elif method == 'tfidf':
             return self.tfidf.summarize(text, num_sentences, summary_ratio)
         elif method == 'frequency':
             return self.frequency.summarize(text, num_sentences, summary_ratio)
+        elif method == 'clustering':  # ← NEW!
+            return self.clustering.summarize(text, num_sentences, summary_ratio)
         else:
-            raise ValueError(f"Unknown method: {method}. Use 'textrank', 'tfidf', or 'frequency'")
+            raise ValueError(f"Unknown method: {method}. Use 'textrank', 'tfidf', 'frequency', or 'clustering'")
     
     def summarize_all(self, text: str, num_sentences: int = 3) -> Dict[str, Dict]:
         """Generate summaries using all methods for comparison"""
         return {
-            'textrank': self.summarize(text, 'textrank', num_sentences),
+            'textrank_tfidf': self.summarize(text, 'textrank', num_sentences, use_tfidf_weighting=True),
+            'textrank_basic': self.summarize(text, 'textrank', num_sentences, use_tfidf_weighting=False),
+            'clustering': self.summarize(text, 'clustering', num_sentences),  # ← NEW!
             'tfidf': self.summarize(text, 'tfidf', num_sentences),
             'frequency': self.summarize(text, 'frequency', num_sentences)
         }
@@ -628,41 +882,101 @@ def demo_system():
     
     output_lines.append("")
     
-    # Evaluation
-    output_lines.append("3. EVALUATION EXAMPLE")
+    # COMPARATIVE EVALUATION - All methods
+    output_lines.append("3. COMPARATIVE EVALUATION")
     output_lines.append("-" * 70)
-    textrank_summary = summaries['textrank']['summary']
-    evaluation = system.evaluate(sample_text, textrank_summary)
-    output_lines.append(f"Compression ratio: {evaluation['compression_ratio']:.2%}")
-    output_lines.append(f"Original sentences: {evaluation['original_length']}")
-    output_lines.append(f"Summary sentences: {evaluation['summary_length']}")
     
-    # ROUGE evaluation with reference
+    # Check if reference exists
     references_dir = os.path.join("data", "reference_summaries")
     base_name = os.path.splitext(article_name)[0]
     reference_file = os.path.join(references_dir, f"{base_name}.txt")
     
     if os.path.exists(reference_file):
-        output_lines.append("")
-        output_lines.append("4. ROUGE EVALUATION (with reference summary)")
-        output_lines.append("-" * 70)
         try:
             reference_summary = system.load_document(reference_file)
-            evaluation_with_ref = system.evaluate(sample_text, textrank_summary, reference_summary)
             
-            if 'rouge_scores' in evaluation_with_ref:
-                rouge_scores = evaluation_with_ref['rouge_scores']
-                output_lines.append(f"ROUGE-1 F1: {rouge_scores['rouge-1']['f1']:.3f}")
-                output_lines.append(f"ROUGE-2 F1: {rouge_scores['rouge-2']['f1']:.3f}")
-                output_lines.append(f"ROUGE-L F1: {rouge_scores['rouge-l']['f1']:.3f}")
-            else:
-                output_lines.append("No ROUGE scores returned.")
+            output_lines.append("\nROUGE Scores Comparison:")
+            output_lines.append("-" * 70)
+            output_lines.append(f"{'Method':<20} {'ROUGE-1':<10} {'ROUGE-2':<10} {'ROUGE-L':<10}")
+            output_lines.append("-" * 70)
+            
+            # Store results for finding best method
+            results_comparison = {}
+            
+            # Evaluate each method
+            for method_name, summary_result in summaries.items():
+                evaluation = system.evaluate(
+                    sample_text, 
+                    summary_result['summary'], 
+                    reference_summary
+                )
+                
+                if 'rouge_scores' in evaluation:
+                    rouge_1 = evaluation['rouge_scores']['rouge-1']['f1']
+                    rouge_2 = evaluation['rouge_scores']['rouge-2']['f1']
+                    rouge_l = evaluation['rouge_scores']['rouge-l']['f1']
+                    
+                    results_comparison[method_name] = {
+                        'rouge-1': rouge_1,
+                        'rouge-2': rouge_2,
+                        'rouge-l': rouge_l
+                    }
+                    
+                    output_lines.append(
+                        f"{method_name:<20} {rouge_1:<10.3f} {rouge_2:<10.3f} {rouge_l:<10.3f}"
+                    )
+            
+            output_lines.append("-" * 70)
+            
+            # Find and display best method for each metric
+            if results_comparison:
+                output_lines.append("")
+                output_lines.append("Best Performing Method per Metric:")
+                output_lines.append("-" * 70)
+                
+                # Find best for ROUGE-1
+                best_r1 = max(results_comparison.items(), key=lambda x: x[1]['rouge-1'])
+                output_lines.append(f"ROUGE-1: {best_r1[0]} (F1={best_r1[1]['rouge-1']:.3f})")
+                
+                # Find best for ROUGE-2
+                best_r2 = max(results_comparison.items(), key=lambda x: x[1]['rouge-2'])
+                output_lines.append(f"ROUGE-2: {best_r2[0]} (F1={best_r2[1]['rouge-2']:.3f})")
+                
+                # Find best for ROUGE-L
+                best_rl = max(results_comparison.items(), key=lambda x: x[1]['rouge-l'])
+                output_lines.append(f"ROUGE-L: {best_rl[0]} (F1={best_rl[1]['rouge-l']:.3f})")
+                
+                # Calculate average and find overall best
+                output_lines.append("")
+                output_lines.append("Average ROUGE Scores (across all metrics):")
+                output_lines.append("-" * 70)
+                
+                avg_scores = {}
+                for method_name, scores in results_comparison.items():
+                    avg = (scores['rouge-1'] + scores['rouge-2'] + scores['rouge-l']) / 3
+                    avg_scores[method_name] = avg
+                    output_lines.append(f"{method_name:<20} {avg:.3f}")
+                
+                best_overall = max(avg_scores.items(), key=lambda x: x[1])
+                output_lines.append("-" * 70)
+                output_lines.append(f"** BEST OVERALL: {best_overall[0]} (Avg={best_overall[1]:.3f}) **")
+            
+            output_lines.append("")
+            
         except Exception as e:
-            output_lines.append(f"Error loading reference summary: {e}")
+            output_lines.append(f"Error in comparative evaluation: {e}")
     else:
+        output_lines.append("\nNo reference summary found for ROUGE evaluation")
+        output_lines.append(f"Expected at: {reference_file}")
+        output_lines.append("Create a reference summary to enable method comparison.")
+        
+        # Still show basic evaluation without ROUGE
         output_lines.append("")
-        output_lines.append(f"Note: Reference summary not found at {reference_file}")
-        output_lines.append("Create a reference summary to enable ROUGE evaluation.")
+        output_lines.append("Basic Evaluation (without reference):")
+        output_lines.append("-" * 70)
+        for method_name, summary_result in summaries.items():
+            evaluation = system.evaluate(sample_text, summary_result['summary'])
+            output_lines.append(f"{method_name:<20} Compression: {evaluation['compression_ratio']:.2%}")
     
     output_lines.append("")
     output_lines.append("=" * 70)
