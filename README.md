@@ -12,6 +12,8 @@
 
 ---
 
+![ Khmer Text Summarization Demo](./images/imagee.png) (./images/imageee.png) (./images/imageeee.png) 
+
 ## 📋 Overview
 
 This project implements a comprehensive extractive text summarization system specifically designed for Khmer language documents. The system uses multiple algorithms including advanced TextRank with TF-IDF weighting and clustering-based approaches, providing comparative analysis of different summarization methods.
