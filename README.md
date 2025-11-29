@@ -476,3 +476,13 @@ Potential enhancements for future versions:
 - Streamlit team for the web application framework
 - All team members for their contributions and enhancements
 - The Khmer NLP community for resources and inspiration
+
+---
+
+## 📝 License
+
+This project is licensed under the MIT License - feel free to use it for your own projects.
+
+## 📧 Contact
+
+For questions or issues, please open an issue on GitHub or contact the team members directly.
