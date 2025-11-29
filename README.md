@@ -46,6 +46,15 @@ This project implements a comprehensive extractive text summarization system spe
 - Python 3.7 or higher
 - pip package manager
 
+###  Recommendation
+- Create a separate virtual environment (venv) to avoid conflicts, especially if you have multiple Python versions installed.
+
+**Why use a virtual environment?**
+- Isolates project dependencies from system Python
+- Prevents version conflicts between projects
+- Makes the project reproducible and portable
+- Easy to manage and clean up
+
 ### Step 1: Clone or Download the Project
 
 ```bash
