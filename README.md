@@ -1,16 +1,5 @@
 # Khmer Text Summarization System
 
-**ITM 454 - Natural Language Processing Final Project**
-
-## Team Members
-
-- Len Monireach
-- Taing Kimleng
-- Seng Sokpanha
-- Khvann Munirotha
-- Try Chhensorng
-
----
 
 ![Khmer Text Summarization Demo 1](./image/imagee.png)
 ![Khmer Text Summarization Demo 2](./image/imageee.png)
